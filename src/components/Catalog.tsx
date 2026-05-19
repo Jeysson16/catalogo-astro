@@ -22,6 +22,14 @@ export const Catalog: React.FC = () => {
   const [visibleCount, setVisibleCount] = useState<number>(4);
   const isClickScrollingRef = useRef(false);
   const categoriesScrollRef = useRef<HTMLDivElement>(null);
+  const categoriesTrayRef = useRef<HTMLDivElement>(null);
+
+  const scrollCategoriesTray = (direction: 'left' | 'right') => {
+    if (categoriesTrayRef.current) {
+      const scrollAmount = direction === 'left' ? -280 : 280;
+      categoriesTrayRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
   const [showCatsInNav, setShowCatsInNav] = useState(false);
   const [cart, setCart] = useState<Record<string, { product: any; qty: number }>>({});
   const [cartOpen, setCartOpen] = useState(false);
@@ -354,20 +362,22 @@ export const Catalog: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
-    if (topProducts.length > 0) {
-      setSlideIndex(topProducts.length);
-    }
-  }, [topProducts]);
+  const canSlide = topProducts.length > visibleCount;
 
   useEffect(() => {
-    if (topProducts.length <= 1) return;
+    if (topProducts.length > 0) {
+      setSlideIndex(canSlide ? topProducts.length : 0);
+    }
+  }, [topProducts, canSlide]);
+
+  useEffect(() => {
+    if (!canSlide) return;
     const iv = setInterval(() => {
       setIsTransitioning(true);
       setSlideIndex(prev => prev + 1);
     }, 6000);
     return () => clearInterval(iv);
-  }, [topProducts.length]);
+  }, [canSlide]);
 
   const handleNextSlide = () => {
     setIsTransitioning(true);
@@ -379,7 +389,8 @@ export const Catalog: React.FC = () => {
     setSlideIndex(prev => prev - 1);
   };
 
-  const handleTransitionEnd = () => {
+  const handleTransitionEnd = (e: React.TransitionEvent) => {
+    if (e.target !== e.currentTarget) return;
     if (slideIndex >= topProducts.length * 2) {
       setIsTransitioning(false);
       setSlideIndex(slideIndex - topProducts.length);
@@ -703,57 +714,81 @@ export const Catalog: React.FC = () => {
                 <h2 className="text-2xl sm:text-3xl font-serif text-slate-950 dark:text-white font-normal">Explora nuestras categorías</h2>
               </div>
 
-              <div className="flex items-center gap-5 sm:gap-8 overflow-x-auto justify-start md:justify-center py-4 hide-scrollbar px-2">
-                {/* Circle for "Todos" */}
+              <div className="relative group/categories px-4">
+                {/* Left Arrow Button */}
                 <button 
-                  onClick={() => {
-                    setSelectedCategory('Todos');
-                    setActiveTab('catalogo');
-                    setTimeout(() => {
-                      document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' });
-                    }, 100);
-                  }}
-                  className="flex flex-col items-center gap-3 shrink-0 group text-center"
+                  onClick={() => scrollCategoriesTray('left')}
+                  className="absolute left-0 top-[40%] -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 border border-slate-200/50 dark:border-white/5 cursor-pointer opacity-70 hover:opacity-100 hidden sm:flex items-center justify-center"
                 >
-                  <div 
-                    className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border p-1 transition-all duration-300 ${selectedCategory === 'Todos' ? 'scale-105 shadow-md' : 'border-slate-100 dark:border-slate-800 hover:border-slate-300'}`}
-                    style={selectedCategory === 'Todos' ? { borderColor: primaryColor } : {}}
-                  >
-                    <div className="w-full h-full rounded-full bg-slate-900 dark:bg-slate-800 flex items-center justify-center text-white" style={{ backgroundColor: selectedCategory === 'Todos' ? primaryColor : '' }}>
-                      <ShoppingBag className="w-7 h-7" />
-                    </div>
-                  </div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Todos los productos</span>
-                  <span className="text-[10px] text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">Ver todos →</span>
+                  <ChevronLeft className="w-4 h-4" />
                 </button>
 
-                {categoryCircles.map(cat => (
-                  <button 
-                    key={cat.name} 
-                    onClick={() => {
-                      setSelectedCategory(cat.name);
-                      setActiveTab('catalogo');
-                      setTimeout(() => {
-                        const sec = document.getElementById(`section-${cat.name.replace(/\s+/g, '-')}`);
-                        if (sec) {
-                          sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        } else {
+                {/* Right Arrow Button */}
+                <button 
+                  onClick={() => scrollCategoriesTray('right')}
+                  className="absolute right-0 top-[40%] -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 border border-slate-200/50 dark:border-white/5 cursor-pointer opacity-70 hover:opacity-100 hidden sm:flex items-center justify-center"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+
+                {/* Scrollable container */}
+                <div 
+                  ref={categoriesTrayRef}
+                  className="overflow-x-auto hide-scrollbar py-4 px-2 w-full scroll-smooth"
+                >
+                  <div className="flex items-center gap-5 sm:gap-8 justify-start mx-auto w-max max-w-full">
+                    {/* Circle for "Todos" */}
+                    <button 
+                      onClick={() => {
+                        setSelectedCategory('Todos');
+                        setActiveTab('catalogo');
+                        setTimeout(() => {
                           document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' });
-                        }
-                      }, 100);
-                    }}
-                    className="flex flex-col items-center gap-3 shrink-0 group text-center"
-                  >
-                    <div 
-                      className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border p-1 transition-all duration-300 ${selectedCategory === cat.name ? 'scale-105 shadow-md' : 'border-slate-100 dark:border-slate-800 hover:border-slate-300'}`}
-                      style={selectedCategory === cat.name ? { borderColor: primaryColor } : {}}
+                        }, 100);
+                      }}
+                      className="flex flex-col items-center gap-3 shrink-0 group text-center"
                     >
-                      <img src={cat.img} alt={cat.name} className="w-full h-full rounded-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                    </div>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 capitalize">{cat.name}</span>
-                    <span className="text-[10px] text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">Ver productos →</span>
-                  </button>
-                ))}
+                      <div 
+                        className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border p-1 transition-all duration-300 ${selectedCategory === 'Todos' ? 'scale-105 shadow-md' : 'border-slate-100 dark:border-slate-800 hover:border-slate-300'}`}
+                        style={selectedCategory === 'Todos' ? { borderColor: primaryColor } : {}}
+                      >
+                        <div className="w-full h-full rounded-full bg-slate-900 dark:bg-slate-800 flex items-center justify-center text-white" style={{ backgroundColor: selectedCategory === 'Todos' ? primaryColor : '' }}>
+                          <ShoppingBag className="w-7 h-7" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Todos los productos</span>
+                      <span className="text-[10px] text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">Ver todos →</span>
+                    </button>
+
+                    {categoryCircles.map(cat => (
+                      <button 
+                        key={cat.name} 
+                        onClick={() => {
+                          setSelectedCategory(cat.name);
+                          setActiveTab('catalogo');
+                          setTimeout(() => {
+                            const sec = document.getElementById(`section-${cat.name.replace(/\s+/g, '-')}`);
+                            if (sec) {
+                              sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            } else {
+                              document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' });
+                            }
+                          }, 100);
+                        }}
+                        className="flex flex-col items-center gap-3 shrink-0 group text-center"
+                      >
+                        <div 
+                          className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border p-1 transition-all duration-300 ${selectedCategory === cat.name ? 'scale-105 shadow-md' : 'border-slate-100 dark:border-slate-800 hover:border-slate-300'}`}
+                          style={selectedCategory === cat.name ? { borderColor: primaryColor } : {}}
+                        >
+                          <img src={cat.img} alt={cat.name} className="w-full h-full rounded-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200 capitalize">{cat.name}</span>
+                        <span className="text-[10px] text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">Ver productos →</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -824,32 +859,37 @@ export const Catalog: React.FC = () => {
 
                 <div className="relative group/carousel px-4">
                   {/* Left Arrow Button */}
-                  <button 
-                    onClick={handlePrevSlide}
-                    className="absolute left-0 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 opacity-100 sm:opacity-0 sm:group-hover/carousel:opacity-100 focus:opacity-100 border border-slate-200/50 dark:border-white/5 cursor-pointer"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
+                  {canSlide && (
+                    <button 
+                      onClick={handlePrevSlide}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 opacity-70 hover:opacity-100 border border-slate-200/50 dark:border-white/5 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                  )}
 
                   {/* Right Arrow Button */}
-                  <button 
-                    onClick={handleNextSlide}
-                    className="absolute right-0 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 opacity-100 sm:opacity-0 sm:group-hover/carousel:opacity-100 focus:opacity-100 border border-slate-200/50 dark:border-white/5 cursor-pointer"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
+                  {canSlide && (
+                    <button 
+                      onClick={handleNextSlide}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-white/90 hover:bg-white dark:bg-slate-900/90 dark:hover:bg-slate-800 text-slate-800 dark:text-white shadow-lg transition-all hover:scale-110 opacity-70 hover:opacity-100 border border-slate-200/50 dark:border-white/5 cursor-pointer"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                  )}
 
                   {/* Slider Track */}
                   <div className="overflow-hidden p-1">
                     <div 
                       className="flex" 
                       style={{ 
-                        transform: `translateX(-${slideIndex * (100 / visibleCount)}%)`, 
-                        transition: isTransitioning ? 'transform 500ms cubic-bezier(0.25, 1, 0.5, 1)' : 'none' 
+                        transform: canSlide ? `translateX(-${slideIndex * (100 / visibleCount)}%)` : 'none', 
+                        justifyContent: canSlide ? 'flex-start' : 'center',
+                        transition: isTransitioning && canSlide ? 'transform 500ms cubic-bezier(0.25, 1, 0.5, 1)' : 'none' 
                       }}
                       onTransitionEnd={handleTransitionEnd}
                     >
-                      {[...topProducts, ...topProducts, ...topProducts].map((p, idx) => (
+                      {(canSlide ? [...topProducts, ...topProducts, ...topProducts] : topProducts).map((p, idx) => (
                         <div key={`${p.id}-${idx}`} className="shrink-0 w-1/2 sm:w-1/3 lg:w-1/4 px-2">
                           <ProductCard product={p} index={idx} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
                         </div>
@@ -858,25 +898,27 @@ export const Catalog: React.FC = () => {
                   </div>
                   
                   {/* Pagination Dots */}
-                  <div className="flex justify-center gap-2 mt-8">
-                    {topProducts.map((_, i) => {
-                      const activeDotIndex = slideIndex % topProducts.length;
-                      return (
-                        <button 
-                          key={i} 
-                          onClick={() => {
-                            setIsTransitioning(true);
-                            setSlideIndex(topProducts.length + i);
-                          }}
-                          className="w-2 h-2 rounded-full transition-all duration-300" 
-                          style={{ 
-                            backgroundColor: activeDotIndex === i ? primaryColor : '',
-                            width: activeDotIndex === i ? '20px' : '8px'
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
+                  {canSlide && (
+                    <div className="flex justify-center gap-2 mt-8">
+                      {topProducts.map((_, i) => {
+                        const activeDotIndex = slideIndex % topProducts.length;
+                        return (
+                          <button 
+                            key={i} 
+                            onClick={() => {
+                              setIsTransitioning(true);
+                              setSlideIndex(topProducts.length + i);
+                            }}
+                            className="w-2 h-2 rounded-full transition-all duration-300 bg-slate-300 dark:bg-slate-700" 
+                            style={{ 
+                              backgroundColor: activeDotIndex === i ? primaryColor : undefined,
+                              width: activeDotIndex === i ? '20px' : '8px'
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Expanded Sections: Premium Brand Banners for Key Categories */}
