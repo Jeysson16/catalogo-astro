@@ -91,11 +91,6 @@ export const ProductCard: React.FC<{
         <h3 className="text-slate-900 dark:text-white text-[12px] font-bold leading-snug line-clamp-2 group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors">
           {product.name}
         </h3>
-        
-        {/* Specs / category label */}
-        <span className="text-[10px] text-slate-400 font-light mt-0.5 block">
-          {product.category || 'Revestimiento'}
-        </span>
 
         {/* Pricing and Cart Actions */}
         <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100/60 dark:border-slate-800/40">

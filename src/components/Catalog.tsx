@@ -357,6 +357,20 @@ export const Catalog: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [lastScrollY]);
 
+  const scrollSmoothWithOffset = (id: string, offset = 180) => {
+    const el = document.getElementById(id);
+    if (el) {
+      const bodyRect = document.body.getBoundingClientRect().top;
+      const elementRect = el.getBoundingClientRect().top;
+      const elementPosition = elementRect - bodyRect;
+      const offsetPosition = elementPosition - offset;
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+    }
+  };
+
   const [activeScrollCategory, setActiveScrollCategory] = useState<string | null>(null);
 
   // Scroll Spy for Catalog sections
@@ -454,7 +468,7 @@ export const Catalog: React.FC = () => {
               Inicio
             </button>
             <button 
-              onClick={() => { setActiveTab('catalogo'); setTimeout(() => document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' }), 100); }} 
+              onClick={() => { setActiveTab('catalogo'); setTimeout(() => scrollSmoothWithOffset('catalog-main'), 100); }} 
               className={`transition-colors relative after:absolute after:bottom-[-4px] after:left-0 after:w-full after:h-[1.5px] after:transition-transform after:origin-left ${activeTab === 'catalogo' ? 'text-slate-950 dark:text-white after:scale-x-100' : 'hover:text-slate-950 dark:hover:text-white after:scale-x-0 hover:after:scale-x-100'}`}
               style={{ 
                 color: activeTab === 'catalogo' ? primaryColor : '',
@@ -464,7 +478,7 @@ export const Catalog: React.FC = () => {
               Catálogo
             </button>
             <button 
-              onClick={() => { setActiveTab('inicio'); setTimeout(() => document.getElementById('categories-section')?.scrollIntoView({ behavior: 'smooth' }), 100); }} 
+              onClick={() => { setActiveTab('inicio'); setTimeout(() => scrollSmoothWithOffset('categories-section'), 100); }} 
               className="hover:text-slate-950 dark:hover:text-white transition-colors relative after:absolute after:bottom-[-4px] after:left-0 after:w-full after:h-[1.5px] after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:origin-left"
             >
               Categorías
@@ -503,8 +517,8 @@ export const Catalog: React.FC = () => {
       <AnimatePresence>
         {isAppLoading && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white/95 dark:bg-[#09090b]/95 backdrop-blur-md">
-            {branchLogo ? (
-              <motion.img animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }} transition={{ repeat: Infinity, duration: 1.5 }} src={branchLogo} alt="Logo" className="w-16 h-16 object-contain mb-4" />
+            {branchLogo && logoReady ? (
+              <motion.img animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }} transition={{ repeat: Infinity, duration: 1.5 }} src={branchLogo} alt="" className="w-16 h-16 object-contain mb-4" />
             ) : (
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-10 h-10 border-[3px] border-slate-200 rounded-full mb-4" style={{ borderTopColor: primaryColor }} />
             )}
@@ -815,7 +829,7 @@ export const Catalog: React.FC = () => {
                           const panelCat = categories.find(c => c.toLowerCase().includes('panel'));
                           if (panelCat) setSelectedCategory(panelCat);
                           setActiveTab('catalogo');
-                          setTimeout(() => document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' }), 100);
+                          setTimeout(() => scrollSmoothWithOffset('catalog-main'), 100);
                         }}
                         className="px-5 py-2.5 rounded-full text-[9px] font-bold uppercase tracking-wider text-white transition-all hover:scale-105 active:scale-95 shadow-md flex items-center gap-1.5 w-fit"
                         style={{ backgroundColor: primaryColor }}
@@ -846,7 +860,7 @@ export const Catalog: React.FC = () => {
                           const floorCat = categories.find(c => c.toLowerCase().includes('piso') || c.toLowerCase().includes('suelo') || c.toLowerCase().includes('spc'));
                           if (floorCat) setSelectedCategory(floorCat);
                           setActiveTab('catalogo');
-                          setTimeout(() => document.getElementById('catalog-main')?.scrollIntoView({ behavior: 'smooth' }), 100);
+                          setTimeout(() => scrollSmoothWithOffset('catalog-main'), 100);
                         }}
                         className="px-5 py-2.5 rounded-full text-[9px] font-bold uppercase tracking-wider text-white transition-all hover:scale-105 active:scale-95 shadow-md flex items-center gap-1.5 w-fit"
                         style={{ backgroundColor: primaryColor }}
@@ -909,18 +923,7 @@ export const Catalog: React.FC = () => {
                       onClick={() => {
                         setSelectedCategory('Todos'); // Ensure all sections are rendered
                         setTimeout(() => {
-                          const el = document.getElementById(`section-${cat.replace(/\s+/g, '-')}`);
-                          if (el) {
-                            const offset = 120;
-                            const bodyRect = document.body.getBoundingClientRect().top;
-                            const elementRect = el.getBoundingClientRect().top;
-                            const elementPosition = elementRect - bodyRect;
-                            const offsetPosition = elementPosition - offset;
-                            window.scrollTo({
-                              top: offsetPosition,
-                              behavior: 'smooth'
-                            });
-                          }
+                          scrollSmoothWithOffset(`section-${cat.replace(/\s+/g, '-')}`, 180);
                         }, 50);
                       }} 
                       className="px-4.5 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all shrink-0 uppercase tracking-wider capitalize"
