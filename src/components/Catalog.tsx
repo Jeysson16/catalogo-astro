@@ -26,6 +26,8 @@ export const Catalog: React.FC = () => {
   const [cart, setCart] = useState<Record<string, { product: any; qty: number }>>({});
   const [cartOpen, setCartOpen] = useState(false);
   const [shareQr, setShareQr] = useState('');
+  const [shareUrl, setShareUrl] = useState('');
+  const [copied, setCopied] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
   const heroRef = useRef<HTMLElement>(null);
 
@@ -48,9 +50,10 @@ export const Catalog: React.FC = () => {
   const cartTotal = Object.values(cart).reduce((s, v) => s + v.qty * v.product.price, 0);
 
   const generateShareLink = () => {
-    const items = Object.values(cart).map(v => ({ id: v.product.id, n: v.product.name, q: v.qty, p: v.product.price }));
-    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(items))));
-    const url = `${window.location.origin}${window.location.pathname}?cart=${encoded}`;
+    const items = Object.values(cart).map(v => `${encodeURIComponent(v.product.name.trim())}:${v.qty}`);
+    const cartString = items.join(',');
+    const url = `${window.location.origin}${window.location.pathname}?cart=${cartString}`;
+    setShareUrl(url);
     setShareQr(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`);
   };
 
@@ -61,22 +64,72 @@ export const Catalog: React.FC = () => {
       const params = new URLSearchParams(window.location.search);
       const cartParam = params.get('cart');
       if (cartParam) {
-        const decoded = JSON.parse(decodeURIComponent(escape(atob(cartParam))));
-        if (Array.isArray(decoded)) {
-          const loadedCart: Record<string, { product: any; qty: number }> = {};
-          decoded.forEach((item: any) => {
-            const matchingProduct = products.find(p => p.id === item.id || p.name === item.n);
-            if (matchingProduct) {
-              loadedCart[matchingProduct.id] = {
-                product: matchingProduct,
-                qty: item.q
-              };
+        const loadedCart: Record<string, { product: any; qty: number }> = {};
+        let items: { name: string; qty: number; id?: string; price?: number }[] = [];
+
+        if (cartParam.includes(':') || cartParam.startsWith('[')) {
+          // New human-readable format: "Name:Qty,Name:Qty"
+          const parts = cartParam.split(',');
+          parts.forEach(part => {
+            const index = part.lastIndexOf(':');
+            if (index !== -1) {
+              const name = decodeURIComponent(part.substring(0, index)).trim();
+              const qty = parseInt(part.substring(index + 1)) || 1;
+              if (name) items.push({ name, qty });
             }
           });
-          if (Object.keys(loadedCart).length > 0) {
-            setCart(loadedCart);
-            setCartOpen(true);
+        } else {
+          // Fallback to old base64 format for backward compatibility
+          try {
+            const decoded = JSON.parse(decodeURIComponent(escape(atob(cartParam))));
+            if (Array.isArray(decoded)) {
+              items = decoded.map(item => ({
+                id: item.id,
+                name: item.n,
+                qty: item.q,
+                price: item.p
+              }));
+            }
+          } catch (err) {
+            console.error("Failed to parse base64 cart param:", err);
           }
+        }
+
+        // Match items with Firestore products or use virtual fallback
+        items.forEach(item => {
+          const matchingProduct = products.find(p => 
+            (item.id && p.id === item.id) || 
+            p.name?.toLowerCase().trim() === item.name.toLowerCase().trim()
+          );
+
+          if (matchingProduct) {
+            loadedCart[matchingProduct.id] = {
+              product: matchingProduct,
+              qty: item.qty
+            };
+          } else {
+            // Create a virtual placeholder product from name so the user can see it in the cart!
+            const virtualProduct = {
+              id: item.id || `virtual-${Math.random()}`,
+              name: item.name,
+              price: item.price || 0,
+              currentStock: item.qty,
+              minStock: 0,
+              category: 'Compartido',
+              brand: 'Importado',
+              imageUrl: '',
+              images: []
+            };
+            loadedCart[virtualProduct.id] = {
+              product: virtualProduct,
+              qty: item.qty
+            };
+          }
+        });
+
+        if (Object.keys(loadedCart).length > 0) {
+          setCart(loadedCart);
+          setCartOpen(true);
         }
       }
     } catch (e) {
@@ -1139,8 +1192,15 @@ export const Catalog: React.FC = () => {
                 <img src={shareQr} alt="QR Code" className="w-48 h-48" />
               </div>
               <div className="space-y-2">
-                <button onClick={() => { const url = new URL(shareQr).searchParams.get('data') || ''; navigator.clipboard.writeText(url); }} className="w-full py-2 rounded-full text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:hover:bg-slate-200 dark:text-slate-950 transition-colors">
-                  Copiar enlace
+                <button 
+                  onClick={() => { 
+                    navigator.clipboard.writeText(shareUrl); 
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }} 
+                  className={`w-full py-2 rounded-full text-xs font-bold transition-all duration-300 ${copied ? 'bg-emerald-600 text-white' : 'bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:hover:bg-slate-200 dark:text-slate-950'}`}
+                >
+                  {copied ? '¡Enlace Copiado!' : 'Copiar enlace'}
                 </button>
                 <button onClick={() => setShareQr('')} className="w-full py-2 rounded-full text-xs font-bold text-slate-400 hover:text-slate-650 transition-colors">Cerrar</button>
               </div>
