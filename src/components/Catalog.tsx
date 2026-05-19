@@ -395,16 +395,22 @@ export const Catalog: React.FC = () => {
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
-      if (currentScrollY > 80) {
-        if (currentScrollY > lastScrollY) {
+      const delta = currentScrollY - lastScrollY;
+      
+      if (currentScrollY <= 80) {
+        setShowHeader(true);
+      } else {
+        // Hysteresis: Only hide if scrolled down by > 15px, show if scrolled up by > 15px
+        if (delta > 15) {
           setShowHeader(false);
-        } else {
+        } else if (delta < -15) {
           setShowHeader(true);
         }
-      } else {
-        setShowHeader(true);
       }
-      setLastScrollY(currentScrollY);
+      
+      if (Math.abs(delta) > 5) {
+        setLastScrollY(currentScrollY);
+      }
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
@@ -426,7 +432,7 @@ export const Catalog: React.FC = () => {
 
   const [activeScrollCategory, setActiveScrollCategory] = useState<string | null>(null);
 
-  // Scroll Spy for Catalog sections
+  // Scroll Spy for Catalog sections with nearest-section fallback
   useEffect(() => {
     if (activeTab !== 'catalogo' || selectedCategory !== 'Todos') {
       setActiveScrollCategory(null);
@@ -434,17 +440,26 @@ export const Catalog: React.FC = () => {
     }
 
     const handleScrollSpy = () => {
-      const scrollPos = window.scrollY + 180; // Offset for sticky headers
+      const scrollPos = window.scrollY + 200; // Offset for sticky headers
       let currentCat: string | null = null;
+      let closestSectionCat: string | null = null;
+      let minDistance = Infinity;
 
       for (const cat of categories) {
         const el = document.getElementById(`section-${cat.replace(/\s+/g, '-')}`);
         if (el) {
           const top = el.offsetTop;
           const height = el.offsetHeight;
+          
           if (scrollPos >= top && scrollPos < top + height) {
             currentCat = cat;
             break;
+          }
+
+          const distance = Math.abs(scrollPos - top);
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestSectionCat = cat;
           }
         }
       }
@@ -452,6 +467,11 @@ export const Catalog: React.FC = () => {
       const mainEl = document.getElementById('catalog-main');
       if (mainEl && window.scrollY + 120 < mainEl.offsetTop) {
         currentCat = 'Todos';
+      }
+
+      // If we are scrolling past the banner but in the middle of sections, use the closest section
+      if (!currentCat && window.scrollY + 120 >= (mainEl?.offsetTop || 0)) {
+        currentCat = closestSectionCat;
       }
 
       setActiveScrollCategory(currentCat || 'Todos');
@@ -948,8 +968,8 @@ export const Catalog: React.FC = () => {
                SECTION 2 — Interactive Deep Filters & Grid
              ══════════════════════════════════════ */}
           <div 
-            className="sticky z-40 bg-white/95 dark:bg-[#09090b]/95 backdrop-blur-xl border-b border-slate-200/50 dark:border-white/5 shadow-sm transition-all duration-300 py-3"
-            style={{ top: showHeader ? '52px' : '0px' }}
+            className="sticky z-40 bg-white/95 dark:bg-[#09090b]/95 backdrop-blur-xl border-b border-slate-200/50 dark:border-white/5 shadow-sm transition-[top] duration-300 ease-in-out py-3"
+            style={{ top: showHeader ? '52px' : '0px', willChange: 'top' }}
           >
             <div className="max-w-6xl mx-auto px-6 space-y-3">
               {/* Horizontal Scrollable Categories Pills */}
