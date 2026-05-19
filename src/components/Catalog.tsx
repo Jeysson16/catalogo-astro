@@ -357,6 +357,44 @@ export const Catalog: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, [lastScrollY]);
 
+  const [activeScrollCategory, setActiveScrollCategory] = useState<string | null>(null);
+
+  // Scroll Spy for Catalog sections
+  useEffect(() => {
+    if (activeTab !== 'catalogo' || selectedCategory !== 'Todos') {
+      setActiveScrollCategory(null);
+      return;
+    }
+
+    const handleScrollSpy = () => {
+      const scrollPos = window.scrollY + 180; // Offset for sticky headers
+      let currentCat: string | null = null;
+
+      for (const cat of categories) {
+        const el = document.getElementById(`section-${cat.replace(/\s+/g, '-')}`);
+        if (el) {
+          const top = el.offsetTop;
+          const height = el.offsetHeight;
+          if (scrollPos >= top && scrollPos < top + height) {
+            currentCat = cat;
+            break;
+          }
+        }
+      }
+
+      const mainEl = document.getElementById('catalog-main');
+      if (mainEl && window.scrollY + 120 < mainEl.offsetTop) {
+        currentCat = 'Todos';
+      }
+
+      setActiveScrollCategory(currentCat || 'Todos');
+    };
+
+    window.addEventListener('scroll', handleScrollSpy, { passive: true });
+    handleScrollSpy();
+    return () => window.removeEventListener('scroll', handleScrollSpy);
+  }, [activeTab, selectedCategory, categories]);
+
   useEffect(() => {
     if (categoriesScrollRef.current) {
       const activeEl = categoriesScrollRef.current.querySelector('[data-active="true"]');
@@ -368,7 +406,7 @@ export const Catalog: React.FC = () => {
         });
       }
     }
-  }, [selectedCategory]);
+  }, [selectedCategory, activeScrollCategory]);
 
   const featuredProduct = topProducts[featuredIndex] || topProducts[0] || products[0];
   const featuredImages = useMemo(() => {
@@ -851,25 +889,47 @@ export const Catalog: React.FC = () => {
               <div ref={categoriesScrollRef} className="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar scroll-smooth">
                 <button 
                   id="tab-Todos"
-                  data-active={selectedCategory === 'Todos'}
-                  onClick={() => setSelectedCategory('Todos')} 
+                  data-active={(activeScrollCategory || selectedCategory) === 'Todos'}
+                  onClick={() => {
+                    setSelectedCategory('Todos');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }} 
                   className="px-4.5 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all shrink-0 uppercase tracking-wider"
-                  style={selectedCategory === 'Todos' ? { backgroundColor: primaryColor, color: '#fff' } : { backgroundColor: theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#f1f5f9' }}
+                  style={(activeScrollCategory || selectedCategory) === 'Todos' ? { backgroundColor: primaryColor, color: '#fff' } : { backgroundColor: theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#f1f5f9' }}
                 >
                   Todos
                 </button>
-                {categories.map(cat => (
-                  <button 
-                    key={cat} 
-                    id={`tab-${cat.replace(/\s+/g, '-')}`}
-                    data-active={selectedCategory === cat}
-                    onClick={() => setSelectedCategory(cat)} 
-                    className="px-4.5 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all shrink-0 uppercase tracking-wider capitalize"
-                    style={selectedCategory === cat ? { backgroundColor: primaryColor, color: '#fff' } : { backgroundColor: theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#f1f5f9' }}
-                  >
-                    {cat}
-                  </button>
-                ))}
+                {categories.map(cat => {
+                  const isCurrent = (activeScrollCategory || selectedCategory) === cat;
+                  return (
+                    <button 
+                      key={cat} 
+                      id={`tab-${cat.replace(/\s+/g, '-')}`}
+                      data-active={isCurrent}
+                      onClick={() => {
+                        setSelectedCategory('Todos'); // Ensure all sections are rendered
+                        setTimeout(() => {
+                          const el = document.getElementById(`section-${cat.replace(/\s+/g, '-')}`);
+                          if (el) {
+                            const offset = 120;
+                            const bodyRect = document.body.getBoundingClientRect().top;
+                            const elementRect = el.getBoundingClientRect().top;
+                            const elementPosition = elementRect - bodyRect;
+                            const offsetPosition = elementPosition - offset;
+                            window.scrollTo({
+                              top: offsetPosition,
+                              behavior: 'smooth'
+                            });
+                          }
+                        }, 50);
+                      }} 
+                      className="px-4.5 py-1.5 rounded-full text-[10px] sm:text-xs font-bold transition-all shrink-0 uppercase tracking-wider capitalize"
+                      style={isCurrent ? { backgroundColor: primaryColor, color: '#fff' } : { backgroundColor: theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#f1f5f9' }}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Rich Filter Controls Row */}
