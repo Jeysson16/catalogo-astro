@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { collection, getDocs, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, query, where, onSnapshot, setDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { BranchSelector } from './BranchSelector';
 import { ProductCard } from './ProductCard';
+import { SharedCartView } from './SharedCartView';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, ShoppingBag, Moon, Sun, X, Package as PackageIcon, ChevronDown, Plus, Minus, Share2, Truck, MessageSquare, FileText, Mail, Phone, MapPin, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ShoppingBag, Moon, Sun, X, Package as PackageIcon, ChevronDown, Plus, Minus, Share2, Truck, MessageSquare, FileText, Mail, Phone, MapPin, ChevronLeft, ChevronRight, ArrowLeft } from 'lucide-react';
 
 export const Catalog: React.FC = () => {
   const [branches, setBranches] = useState<any[]>([]);
@@ -16,6 +17,8 @@ export const Catalog: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [activeModalImage, setActiveModalImage] = useState<number>(0);
+  const [modalQtyCajas, setModalQtyCajas] = useState<number>(0);
+  const [modalQtyUnidades, setModalQtyUnidades] = useState<number>(0);
   const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [slideIndex, setSlideIndex] = useState<number>(0);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(true);
@@ -37,6 +40,10 @@ export const Catalog: React.FC = () => {
   const [shareUrl, setShareUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
+  const [clientData, setClientData] = useState({ name: '', dni: '', phone: '' });
+  const [isClientFormOpen, setIsClientFormOpen] = useState(false);
+  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [sharedCart, setSharedCart] = useState<Record<string, { product: any; qty: number }> | null>(null);
   const heroRef = useRef<HTMLElement>(null);
 
   // Home vs Full Catalog View state tabs
@@ -54,15 +61,107 @@ export const Catalog: React.FC = () => {
     else delete c[id];
     return c;
   });
+  const updateCartQty = (id: string, qty: number, product?: any) => setCart(prev => {
+    const c = { ...prev };
+    if (qty <= 0) {
+      delete c[id];
+    } else {
+      const existing = c[id];
+      const p = product || (existing ? existing.product : null);
+      if (p) {
+        c[id] = { product: p, qty };
+      }
+    }
+    return c;
+  });
   const cartCount = Object.values(cart).reduce((s, v) => s + v.qty, 0);
   const cartTotal = Object.values(cart).reduce((s, v) => s + v.qty * v.product.price, 0);
 
   const generateShareLink = () => {
     const items = Object.values(cart).map(v => `${encodeURIComponent(v.product.name.trim())}:${v.qty}`);
     const cartString = items.join(',');
-    const url = `${window.location.origin}${window.location.pathname}?cart=${cartString}`;
+    let url = `${window.location.origin}${window.location.pathname}?cart=${cartString}&branch=${selectedBranch?.id || ''}`;
+    if (clientData.name || clientData.dni) {
+      url += `&clientName=${encodeURIComponent(clientData.name)}&clientDNI=${encodeURIComponent(clientData.dni)}&clientPhone=${encodeURIComponent(clientData.phone)}`;
+    }
     setShareUrl(url);
     setShareQr(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`);
+  };
+
+  const shareViaWhatsApp = () => {
+    const items = Object.values(cart).map(v => `${encodeURIComponent(v.product.name.trim())}:${v.qty}`);
+    const cartString = items.join(',');
+    let url = `${window.location.origin}${window.location.pathname}?cart=${cartString}&branch=${selectedBranch?.id || ''}`;
+    if (clientData.name || clientData.dni) {
+      url += `&clientName=${encodeURIComponent(clientData.name)}&clientDNI=${encodeURIComponent(clientData.dni)}&clientPhone=${encodeURIComponent(clientData.phone)}`;
+    }
+    
+    let message = `*Nuevo pedido - Dechy Inventario*\n\n`;
+    message += `Hola, me gustaría cotizar/solicitar los siguientes productos:\n\n`;
+    
+    Object.values(cart).forEach(({ product: p, qty }) => {
+      const upb = p.unitsPerBox || 1;
+      let qtyStr = '';
+      if (p.unitsPerBox && p.unitsPerBox > 1) {
+        const boxes = Math.floor(qty / upb);
+        const units = qty % upb;
+        const parts = [];
+        if (boxes > 0) parts.push(`${boxes} ${boxes === 1 ? 'caja' : 'cajas'}`);
+        if (units > 0) parts.push(`${units} ${units === 1 ? 'unidad' : 'unidades'}`);
+        qtyStr = parts.join(' y ');
+      } else {
+        qtyStr = `${qty} ${qty === 1 ? 'unidad' : 'unidades'}`;
+      }
+      
+      message += `• *${p.name}* - ${qtyStr} (S/ ${(p.price * qty).toFixed(2)})\n`;
+    });
+    
+    message += `\n*Subtotal:* S/ ${cartTotal.toFixed(2)}\n\n`;
+    message += `Puedes ver el detalle de mi selección aquí:\n${url}`;
+    
+    const getCleanWhatsAppNumber = (branch: any) => {
+      let rawNum = branch?.configuracion?.redes_sociales?.whatsapp || 
+                   branch?.configuracion?.contacto?.telefono || 
+                   branch?.telefono;
+      if (!rawNum) return '';
+      if (rawNum.includes('wa.me/') || rawNum.includes('phone=')) {
+        const match = rawNum.match(/(?:wa\.me\/|phone=)(\d+)/);
+        if (match && match[1]) return match[1];
+      }
+      let digits = rawNum.replace(/\D/g, '');
+      if (digits.length === 9) {
+        digits = '51' + digits;
+      }
+      return digits;
+    };
+
+    const waNumber = getCleanWhatsAppNumber(selectedBranch);
+    const waUrl = `https://api.whatsapp.com/send?phone=${waNumber}&text=${encodeURIComponent(message)}`;
+    window.open(waUrl, '_blank');
+  };
+
+  const saveClientData = async () => {
+    if (!clientData.name && !clientData.dni) return;
+    setIsSavingClient(true);
+    try {
+      const branchId = selectedBranch?.id || 'branch';
+      const customerIdentifier = clientData.dni.trim() || clientData.name.trim().toLowerCase().replace(/\s+/g, '_');
+      const docId = `${branchId}_${customerIdentifier}`;
+      
+      await setDoc(doc(db, "customers", docId), {
+        branchId: selectedBranch?.id || null,
+        customerName: clientData.name,
+        customerDNI: clientData.dni,
+        phone: clientData.phone,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      
+      setIsClientFormOpen(false);
+    } catch (e) {
+      console.error("Error saving client:", e);
+    } finally {
+      setIsSavingClient(false);
+    }
   };
 
   // Auto-load shared selections from URL on mount/products load
@@ -136,8 +235,7 @@ export const Catalog: React.FC = () => {
         });
 
         if (Object.keys(loadedCart).length > 0) {
-          setCart(loadedCart);
-          setCartOpen(true);
+          setSharedCart(loadedCart);
         }
       }
     } catch (e) {
@@ -182,7 +280,24 @@ export const Catalog: React.FC = () => {
     return () => obs.disconnect();
   }, []);
 
-  useEffect(() => { setActiveModalImage(0); }, [selectedProduct]);
+  useEffect(() => {
+    setActiveModalImage(0);
+    if (selectedProduct) {
+      const existing = cart[selectedProduct.id];
+      const totalQty = existing ? existing.qty : 0;
+      const upb = selectedProduct.unitsPerBox;
+      if (upb && upb > 1) {
+        setModalQtyCajas(Math.floor(totalQty / upb));
+        setModalQtyUnidades(totalQty % upb);
+      } else {
+        setModalQtyCajas(0);
+        setModalQtyUnidades(totalQty);
+      }
+    } else {
+      setModalQtyCajas(0);
+      setModalQtyUnidades(0);
+    }
+  }, [selectedProduct, cart]);
 
   // Theme
   useEffect(() => {
@@ -219,8 +334,18 @@ export const Catalog: React.FC = () => {
         const snap = await getDocs(collection(db, "branches"));
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setBranches(data);
-        if (data.length > 0) setSelectedBranch(data[0]);
-        else setLoading(false);
+        
+        const params = new URLSearchParams(window.location.search);
+        const branchParam = params.get('branch');
+        const foundBranch = data.find(b => b.id === branchParam);
+        
+        if (foundBranch) {
+          setSelectedBranch(foundBranch);
+        } else if (data.length > 0) {
+          setSelectedBranch(data[0]);
+        } else {
+          setLoading(false);
+        }
       } catch { setLoading(false); }
     })();
   }, []);
@@ -611,7 +736,39 @@ export const Catalog: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {activeTab === 'inicio' ? (
+      {sharedCart ? (
+        <SharedCartView 
+          sharedCart={sharedCart}
+          onClose={() => {
+            const params = new URLSearchParams(window.location.search);
+            params.delete('cart');
+            const newSearch = params.toString();
+            const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '');
+            window.history.replaceState({}, document.title, newUrl);
+            setSharedCart(null);
+          }}
+          onImport={() => {
+            const params = new URLSearchParams(window.location.search);
+            const cartParam = params.get('cart');
+            const clientName = params.get('clientName') || '';
+            const clientDNI = params.get('clientDNI') || '';
+            const clientPhone = params.get('clientPhone') || '';
+            
+            if (cartParam) {
+              const qs = new URLSearchParams();
+              qs.set('importCart', cartParam);
+              if (clientName) qs.set('clientName', clientName);
+              if (clientDNI) qs.set('clientDNI', clientDNI);
+              if (clientPhone) qs.set('clientPhone', clientPhone);
+              
+              window.location.href = `https://jieda.vercel.app/ventas/nueva?${qs.toString()}`;
+            }
+          }}
+          primaryColor={primaryColor}
+          selectedBranch={selectedBranch}
+          theme={theme}
+        />
+      ) : activeTab === 'inicio' ? (
         <>
           {/* ══════════════════════════════════════
                SECTION 1 — Breathtaking Lifestyle Hero
@@ -891,7 +1048,7 @@ export const Catalog: React.FC = () => {
                     >
                       {(canSlide ? [...topProducts, ...topProducts, ...topProducts] : topProducts).map((p, idx) => (
                         <div key={`${p.id}-${idx}`} className="shrink-0 w-1/2 sm:w-1/3 lg:w-1/4 px-2">
-                          <ProductCard product={p} index={idx} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
+                          <ProductCard product={p} index={idx} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} onUpdateCartQty={updateCartQty} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
                         </div>
                       ))}
                     </div>
@@ -1096,7 +1253,7 @@ export const Catalog: React.FC = () => {
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                         {catProds.map((p, i) => (
-                          <ProductCard key={p.id} product={p} index={i} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
+                          <ProductCard key={p.id} product={p} index={i} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} onUpdateCartQty={updateCartQty} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
                         ))}
                       </div>
                     </section>
@@ -1120,7 +1277,7 @@ export const Catalog: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                     {filteredProducts.map((p, i) => (
-                      <ProductCard key={p.id} product={p} index={i} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
+                      <ProductCard key={p.id} product={p} index={i} onClick={() => setSelectedProduct(p)} onAddToCart={addToCart} onUpdateCartQty={updateCartQty} cartQty={cart[p.id]?.qty || 0} primaryColor={primaryColor} />
                     ))}
                   </div>
                 )}
@@ -1130,23 +1287,33 @@ export const Catalog: React.FC = () => {
         </>
       )}
 
-      {/* ── Product Detail Modal ── */}
+      {/* ── Product Detail Full View ── */}
       <AnimatePresence>
         {selectedProduct && (
           <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-            onClick={() => setSelectedProduct(null)}
+            initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 15 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-[100] bg-slate-50 dark:bg-[#08080a] overflow-y-auto"
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="bg-white dark:bg-slate-900 w-full max-w-3xl rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row relative"
-              onClick={e => e.stopPropagation()}
-            >
-              <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 z-50 p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">
-                <X className="w-4 h-4" />
+            {/* Header / Navbar for Full View */}
+            <div className="sticky top-0 z-50 bg-white/80 dark:bg-[#09090b]/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 px-6 py-4 flex items-center justify-between">
+              <button onClick={() => setSelectedProduct(null)} className="flex items-center gap-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors group">
+                <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+                <span className="text-xs sm:text-sm font-bold uppercase tracking-wider">Volver al catálogo</span>
               </button>
+              
+              <div className="flex items-center gap-4">
+                {cartCount > 0 && (
+                  <button onClick={() => setCartOpen(true)} className="relative p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors">
+                    <ShoppingBag className="w-5 h-5" />
+                    <span className="absolute -top-1 -right-1 w-4 h-4 text-[9px] font-bold bg-rose-500 text-white rounded-full flex items-center justify-center">{cartCount}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 md:py-12">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col md:flex-row relative">
 
               <div className="w-full md:w-1/2 bg-slate-50 dark:bg-slate-950 aspect-square md:aspect-auto flex flex-col items-center justify-center p-6 border-r border-slate-100 dark:border-slate-800">
                 <div className="flex-1 flex items-center justify-center w-full">
@@ -1182,17 +1349,195 @@ export const Catalog: React.FC = () => {
                   <span className="text-xs text-slate-400 font-semibold mb-0.5">S/</span>
                   <span className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{selectedProduct.price?.toFixed(2) || '0.00'}</span>
                 </div>
-                <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 flex justify-between items-center border border-slate-100 dark:border-slate-800">
-                  <div>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">Disponibilidad</p>
-                    <p className={`text-base font-bold ${selectedProduct.currentStock > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                      {selectedProduct.currentStock > 0 ? `${selectedProduct.currentStock} Unidades` : 'Sin Stock'}
-                    </p>
+                <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-5 border border-slate-100 dark:border-slate-800 mt-6 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Disponibilidad</p>
+                      <p className={`text-lg font-bold ${selectedProduct.currentStock > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {selectedProduct.currentStock > 0 ? `${selectedProduct.currentStock} Unidades en stock` : 'Agotado Temporalmente'}
+                      </p>
+                    </div>
+                    <ShoppingBag className={`w-6 h-6 ${selectedProduct.currentStock > 0 ? 'text-emerald-500' : 'text-rose-450'}`} />
                   </div>
-                  <ShoppingBag className={`w-5 h-5 ${selectedProduct.currentStock > 0 ? 'text-emerald-500' : 'text-rose-450'}`} />
+
+                  {selectedProduct.currentStock > 0 && (
+                    <div className="pt-4 border-t border-slate-200/50 dark:border-slate-800/60 space-y-3">
+                      <p className="text-[9px] text-slate-450 dark:text-slate-400 font-bold uppercase tracking-wider">Ajustar Cantidad</p>
+                      
+                      {selectedProduct.unitsPerBox && selectedProduct.unitsPerBox > 1 ? (
+                        <div className="flex gap-4">
+                          {/* Cajas */}
+                          <div className="flex-1 space-y-1">
+                            <label className="text-[10px] font-semibold text-slate-500 block">Cajas</label>
+                            <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/40">
+                              <button 
+                                type="button"
+                                onClick={() => setModalQtyCajas(prev => Math.max(0, prev - 1))}
+                                className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input 
+                                type="number" 
+                                min="0"
+                                value={modalQtyCajas}
+                                onChange={e => setModalQtyCajas(Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-full text-center bg-transparent border-none text-xs font-bold outline-none focus:ring-0 text-slate-900 dark:text-white"
+                              />
+                              <button 
+                                type="button"
+                                onClick={() => setModalQtyCajas(prev => prev + 1)}
+                                className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Unidades */}
+                          <div className="flex-1 space-y-1">
+                            <label className="text-[10px] font-semibold text-slate-500 block">Unidades sueltas</label>
+                            <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/40">
+                              <button 
+                                type="button"
+                                onClick={() => setModalQtyUnidades(prev => Math.max(0, prev - 1))}
+                                className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input 
+                                type="number" 
+                                min="0"
+                                value={modalQtyUnidades}
+                                onChange={e => setModalQtyUnidades(Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-full text-center bg-transparent border-none text-xs font-bold outline-none focus:ring-0 text-slate-900 dark:text-white"
+                              />
+                              <button 
+                                type="button"
+                                onClick={() => setModalQtyUnidades(prev => prev + 1)}
+                                className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-semibold text-slate-500 block">Unidades</label>
+                          <div className="flex items-center border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/40 max-w-[200px]">
+                            <button 
+                              type="button"
+                              onClick={() => setModalQtyUnidades(prev => Math.max(0, prev - 1))}
+                              className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+                            >
+                              <Minus className="w-3.5 h-3.5" />
+                            </button>
+                            <input 
+                              type="number" 
+                              min="0"
+                              value={modalQtyUnidades}
+                              onChange={e => setModalQtyUnidades(Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-full text-center bg-transparent border-none text-xs font-bold outline-none focus:ring-0 text-slate-900 dark:text-white"
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => setModalQtyUnidades(prev => prev + 1)}
+                              className="px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-855 text-slate-500 transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Resumen del total calculado */}
+                      {(() => {
+                        const upb = selectedProduct.unitsPerBox || 1;
+                        const calculatedTotalUnits = (selectedProduct.unitsPerBox && selectedProduct.unitsPerBox > 1)
+                          ? (modalQtyCajas * upb + modalQtyUnidades)
+                          : modalQtyUnidades;
+                        const inCart = cart[selectedProduct.id] !== undefined;
+
+                        return (
+                          <div className="space-y-3 pt-2">
+                            {calculatedTotalUnits > 0 && (
+                              <div className="flex justify-between items-center text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                <span>Total a llevar:</span>
+                                <span className="font-bold text-slate-900 dark:text-white">
+                                  {selectedProduct.unitsPerBox && selectedProduct.unitsPerBox > 1
+                                    ? `${modalQtyCajas} cajas y ${modalQtyUnidades} un. (${calculatedTotalUnits} unidades)`
+                                    : `${calculatedTotalUnits} unidades`
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateCartQty(selectedProduct.id, calculatedTotalUnits, selectedProduct);
+                                setSelectedProduct(null);
+                              }}
+                              disabled={calculatedTotalUnits <= 0 && !inCart}
+                              className="w-full py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:scale-105 active:scale-95 shadow-md flex items-center justify-center gap-2"
+                              style={{ backgroundColor: primaryColor }}
+                            >
+                              <ShoppingBag className="w-4 h-4" />
+                              {inCart 
+                                ? (calculatedTotalUnits === 0 ? "Quitar de mi Selección" : "Actualizar Selección") 
+                                : "Agregar a mi Selección"
+                              }
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
-            </motion.div>
+            </div>
+            
+            {/* Additional details section for the full page view */}
+            <div className="mt-8 bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-100 dark:border-slate-800 shadow-sm">
+              <h3 className="text-lg font-serif text-slate-900 dark:text-white mb-4">Información Adicional</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Código / SKU</p>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mt-1">{selectedProduct.id || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Categoría</p>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mt-1 capitalize">{selectedProduct.category || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Marca</p>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mt-1 capitalize">{selectedProduct.brand || 'Colección Dechy'}</p>
+                </div>
+                {selectedProduct.unitsPerBox && (
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Contenido / Caja</p>
+                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mt-1">{selectedProduct.unitsPerBox} u/caja</p>
+                  </div>
+                )}
+                {(selectedProduct.dimensions || selectedProduct.length) && (
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Medidas</p>
+                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mt-1">
+                      {selectedProduct.dimensions || `${selectedProduct.length}×${selectedProduct.width}${selectedProduct.height ? `×${selectedProduct.height}` : ""} cm`}
+                    </p>
+                  </div>
+                )}
+                {selectedProduct.description && (
+                  <div className="col-span-full">
+                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Descripción</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                      {selectedProduct.description}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1215,26 +1560,134 @@ export const Catalog: React.FC = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] font-bold text-slate-950 dark:text-white truncate">{p.name}</p>
-                      <p className="text-[10px] text-slate-400 font-light truncate mb-1">{p.category || 'Materia'}</p>
+                      <p className="text-[10px] text-slate-400 font-light truncate">{p.category || 'Materia'}</p>
+                      {p.unitsPerBox && p.unitsPerBox > 1 ? (
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mb-1">
+                          {Math.floor(qty / p.unitsPerBox)} cjs, {qty % p.unitsPerBox} un.
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 font-light mb-1">
+                          {qty} un.
+                        </p>
+                      )}
                       <p className="text-xs font-bold text-slate-900 dark:text-white">S/ {(p.price * qty).toFixed(2)}</p>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => removeFromCart(id)} className="w-6 h-6 flex items-center justify-center rounded-full bg-slate-250 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-rose-100 hover:text-rose-500 transition-colors"><Minus className="w-3 h-3" /></button>
-                      <span className="text-xs font-bold w-4 text-center">{qty}</span>
-                      <button onClick={() => addToCart(p)} className="w-6 h-6 flex items-center justify-center rounded-full bg-slate-250 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 hover:text-emerald-500 transition-colors"><Plus className="w-3 h-3" /></button>
-                    </div>
+                    {p.unitsPerBox && p.unitsPerBox > 1 ? (
+                      <div className="flex flex-col gap-1 items-end shrink-0">
+                        {/* Cajas */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] text-slate-450 dark:text-slate-500 font-bold uppercase w-8 text-right">Cjs</span>
+                          <button 
+                            onClick={() => updateCartQty(id, qty - p.unitsPerBox, p)} 
+                            className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-rose-100 hover:text-rose-500 transition-colors"
+                          >
+                            <Minus className="w-2.5 h-2.5" />
+                          </button>
+                          <input 
+                            type="number"
+                            min="0"
+                            value={Math.floor(qty / p.unitsPerBox)}
+                            onChange={e => {
+                              const val = Math.max(0, parseInt(e.target.value) || 0);
+                              const remainder = qty % p.unitsPerBox;
+                              updateCartQty(id, val * p.unitsPerBox + remainder, p);
+                            }}
+                            className="w-8 text-center bg-transparent border-none text-[11px] font-bold outline-none focus:ring-0 text-slate-900 dark:text-white p-0"
+                          />
+                          <button 
+                            onClick={() => updateCartQty(id, qty + p.unitsPerBox, p)} 
+                            className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 hover:text-emerald-500 transition-colors"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                        {/* Unidades */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] text-slate-450 dark:text-slate-500 font-bold uppercase w-8 text-right">Uni</span>
+                          <button 
+                            onClick={() => updateCartQty(id, qty - 1, p)} 
+                            className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-rose-100 hover:text-rose-500 transition-colors"
+                          >
+                            <Minus className="w-2.5 h-2.5" />
+                          </button>
+                          <input 
+                            type="number"
+                            min="0"
+                            value={qty % p.unitsPerBox}
+                            onChange={e => {
+                              const val = Math.max(0, parseInt(e.target.value) || 0);
+                              const boxes = Math.floor(qty / p.unitsPerBox);
+                              updateCartQty(id, boxes * p.unitsPerBox + val, p);
+                            }}
+                            className="w-8 text-center bg-transparent border-none text-[11px] font-bold outline-none focus:ring-0 text-slate-900 dark:text-white p-0"
+                          />
+                          <button 
+                            onClick={() => updateCartQty(id, qty + 1, p)} 
+                            className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 hover:text-emerald-500 transition-colors"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 bg-slate-200 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200/50 dark:border-white/5 shrink-0">
+                        <button onClick={() => removeFromCart(id)} className="w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-350 hover:bg-rose-100 hover:text-rose-500 transition-colors"><Minus className="w-3 h-3" /></button>
+                        <input 
+                          type="number"
+                          min="0"
+                          value={qty}
+                          onChange={e => {
+                            const val = Math.max(0, parseInt(e.target.value) || 0);
+                            updateCartQty(id, val, p);
+                          }}
+                          className="w-8 text-center bg-transparent border-none text-xs font-bold outline-none focus:ring-0 text-slate-900 dark:text-white p-0"
+                        />
+                        <button onClick={() => addToCart(p)} className="w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-350 hover:bg-emerald-100 hover:text-emerald-500 transition-colors"><Plus className="w-3 h-3" /></button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {cartCount === 0 && <p className="text-center text-xs text-slate-400 py-12 font-light">Aún no has seleccionado ningún producto.</p>}
               </div>
+              {cartCount > 0 && (
+                <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+                  <button onClick={() => setIsClientFormOpen(!isClientFormOpen)} className="text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1 w-full justify-between">
+                    <span>👤 Mis Datos (Opcional)</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${isClientFormOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  <AnimatePresence>
+                    {isClientFormOpen && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <div className="pt-3 pb-1 space-y-2">
+                          <input type="text" placeholder="Nombre completo" value={clientData.name} onChange={e => setClientData({...clientData, name: e.target.value})} className="w-full text-xs px-3 py-2 border rounded bg-white dark:bg-slate-800 dark:border-slate-700 outline-none focus:border-primary" />
+                          <input type="text" placeholder="DNI / RUC" value={clientData.dni} onChange={e => setClientData({...clientData, dni: e.target.value})} className="w-full text-xs px-3 py-2 border rounded bg-white dark:bg-slate-800 dark:border-slate-700 outline-none focus:border-primary" />
+                          <input type="text" placeholder="Teléfono" value={clientData.phone} onChange={e => setClientData({...clientData, phone: e.target.value})} className="w-full text-xs px-3 py-2 border rounded bg-white dark:bg-slate-800 dark:border-slate-700 outline-none focus:border-primary" />
+                          <button onClick={saveClientData} disabled={isSavingClient || (!clientData.name && !clientData.dni)} className="w-full py-2 bg-slate-900 text-white rounded text-xs font-bold disabled:opacity-50 dark:bg-slate-700 transition-colors">
+                            {isSavingClient ? 'Guardando...' : 'Guardar y Asociar'}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
               {cartCount > 0 && (
                 <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50 dark:bg-slate-950">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-slate-500">Subtotal</span>
                     <span className="text-base font-extrabold text-slate-950 dark:text-white">S/ {cartTotal.toFixed(2)}</span>
                   </div>
-                  <button onClick={() => { generateShareLink(); }} className="w-full py-2.5 rounded-full text-xs font-bold text-white bg-slate-950 dark:bg-white dark:text-slate-950 hover:opacity-90 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]">
-                    <Share2 className="w-4.5 h-4.5" /> Compartir Selección (QR)
+                  <button 
+                    onClick={shareViaWhatsApp} 
+                    className="w-full py-2.5 rounded-full text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    <MessageSquare className="w-4.5 h-4.5" /> Enviar a WhatsApp
+                  </button>
+                  <button 
+                    onClick={generateShareLink} 
+                    className="w-full py-2.5 rounded-full text-xs font-bold text-slate-950 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    <Share2 className="w-4.5 h-4.5" /> Compartir por QR / Enlace
                   </button>
                 </div>
               )}
